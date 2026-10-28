@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Moto wheelie 3D</title>
+<style>
+:root{--bg:#f2f0ec;--ink:#1d1b18;--btn:#e8481c;--btnink:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181d;--ink:#eceae5;--btn:#ff6a3a;--btnink:#15181d}}
+:root[data-theme="dark"]{--bg:#15181d;--ink:#eceae5;--btn:#ff6a3a;--btnink:#15181d}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Barlow Condensed","Arial Narrow",Arial,sans-serif;overflow:hidden}
+#c{display:block;width:100%;height:100%;touch-action:none}
+.ui{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px calc(14px + env(safe-area-inset-bottom,0px))}
+.ui span{font-size:18px;opacity:.7}
+button{font:600 20px "Barlow Condensed","Arial Narrow",Arial,sans-serif;background:var(--btn);color:var(--btnink);border:0;border-radius:999px;padding:10px 22px;cursor:pointer}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.hud{position:fixed;left:0;right:0;top:calc(10px + env(safe-area-inset-top,0px));padding:0 18px;pointer-events:none}
+.hud .row{display:flex;justify-content:space-between;align-items:baseline;font-size:20px}
+.hud b{font-size:34px}
+.gauge{position:relative;height:12px;border-radius:6px;background:color-mix(in srgb,var(--ink) 18%,transparent);margin-top:8px}
+.gauge i{position:absolute;left:27%;width:50%;top:0;bottom:0;background:#3fae5a;opacity:.55;border-radius:6px}
+.gauge u{position:absolute;top:-4px;width:6px;height:20px;border-radius:3px;background:var(--ink);transform:translateX(-3px);left:0}
+#msg{text-align:center;font-size:22px;margin-top:8px;min-height:26px}
+.pads{position:fixed;left:0;right:0;bottom:0;display:flex;gap:12px;padding:12px 14px calc(14px + env(safe-area-inset-bottom,0px))}
+.pad{flex:1;height:96px;border-radius:20px;font-size:24px;line-height:1.1;user-select:none;-webkit-user-select:none;touch-action:none}
+.pad small{display:block;font-size:15px;font-weight:500;opacity:.8}
+.pad.p2{background:#2f6fe0;color:#fff}
+.pad.on{transform:scale(.97);filter:brightness(1.15)}
+#lobby{position:fixed;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;background:var(--bg);padding:20px}
+#lobby div{max-width:340px;width:100%;display:flex;flex-direction:column;gap:12px}
+#lobby h1{margin:0;font-size:40px;line-height:1}
+#lobby p{margin:0;font-size:19px;opacity:.75}
+#lobby input{font:600 24px "Barlow Condensed","Arial Narrow",Arial,sans-serif;padding:10px 14px;border-radius:12px;border:2px solid var(--ink);background:transparent;color:var(--ink);text-transform:lowercase}
+#lobby .alt{background:transparent;color:var(--ink);border:2px solid var(--ink)}
+#lobMsg{min-height:24px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud"><div class="row"><b id="sc">0 m</b><span id="bs">Best 0 m</span></div><div class="gauge"><i></i><u id="gm"></u></div><div id="msg">Player 1 holds gas, Player 2 holds brake</div></div>
+<div id="lobby"><div><h1>Wheelie co-op</h1><p>Two players, one bike. One holds the gas, the other holds the brake. Works over a Wi-Fi hotspot, no internet needed.</p><button id="goHost">Host a game (Player 1)</button><input id="code" placeholder="Host address, e.g. 192.168.43.1" maxlength="40" inputmode="decimal" autocomplete="off"><button id="goJoin">Join a game (Player 2)</button><button id="goLocal" class="alt">Same screen, two thumbs</button><p id="lobMsg"></p></div></div>
+<div class="pads"><button class="pad" id="p1">Player 1: Gas<small>key A</small></button><button class="pad p2" id="p2">Player 2: Brake<small>key L</small></button></div>
+<script src="three.min.js"></script>
+<script>
+window.NetShim=(function(){
+ const id=Math.random().toString(36).slice(2,10);
+ let ws=null,mine={},others={},handlers=[];
+ const fire=()=>handlers.forEach(h=>{try{h({})}catch(e){}});
+ const send=()=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({id:id,p:mine}))};
+ const room={
+  peers(){const now=Date.now(),arr=[{isMe:true,presence:mine}];for(const k in others){if(now-others[k].t>4000){delete others[k];continue}arr.push({isMe:false,presence:others[k].p})}return arr},
+  presence(patch){Object.assign(mine,patch);send();return Promise.resolve()},
+  onPeers(h){handlers.push(h);return function(){}}
+ };
+ return {connect(ip){return new Promise((res,rej)=>{
+  let done=false;
+  const s=new WebSocket('ws://'+ip+':8080');ws=s;
+  const to=setTimeout(()=>{if(!done){done=true;try{s.close()}catch(e){}rej(new Error('timeout'))}},6000);
+  s.onopen=()=>{done=true;clearTimeout(to);send();res(room)};
+  s.onerror=()=>{if(!done){done=true;clearTimeout(to);rej(new Error('error'))}};
+  s.onmessage=ev=>{try{const m=JSON.parse(ev.data);if(!m||!m.id||m.id===id)return;const fresh=!others[m.id];others[m.id]={p:m.p||{},t:Date.now()};if(fresh)send();fire()}catch(e){}};
+  setInterval(()=>{send();fire()},1000);
+ })}};
+})();
+</script>
+<script>
+const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+const cv=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene();
+const bg=dark?0x15181d:0xf2f0ec;
+scene.background=new THREE.Color(bg);
+scene.fog=new THREE.Fog(bg,12,30);
+const cam=new THREE.PerspectiveCamera(45,1,0.1,60);
+scene.add(new THREE.HemisphereLight(0xffffff,0x555566,0.9));
+const sun=new THREE.DirectionalLight(0xffffff,0.8);sun.position.set(4,8,5);scene.add(sun);
+
+const M=(c,r=0.5,m=0.2)=>new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m});
+const red=M(0xe8481c,0.35,0.3),blk=M(0x1b1b1d,0.6,0.2),chr=M(0xb9bec6,0.25,0.8),skin=M(0xd9a47c),jacket=M(0x2f5fd0,0.7,0),pants=M(0x22252b,0.8,0);
+
+// road
+const road=new THREE.Mesh(new THREE.PlaneGeometry(60,6),M(dark?0x2a2d33:0x7c7f86,0.9,0));
+road.rotation.x=-Math.PI/2;scene.add(road);
+const dashes=[];
+for(let i=0;i<16;i++){const d=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.12),M(0xf5d547,0.8,0));d.rotation.x=-Math.PI/2;d.position.set(i*2.4-19,0.01,-1.6);scene.add(d);dashes.push(d);}
+
+// helpers
+function limb(a,b,r,mat){
+  const A=new THREE.Vector3(a[0],a[1],a[2]||0),B=new THREE.Vector3(b[0],b[1],b[2]||0);
+  const len=A.distanceTo(B);
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,12),mat);
+  m.position.copy(A).add(B).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),B.clone().sub(A).normalize());
+  return m;
+}
+const R=0.45;
+function wheel(){
+  const g=new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.TorusGeometry(R-0.08,0.1,12,36),blk));
+  g.add(new THREE.Mesh(new THREE.TorusGeometry(R-0.2,0.015,6,30),chr));
+  for(let i=0;i<6;i++){const s=new THREE.Mesh(new THREE.BoxGeometry(0.02,(R-0.2)*2,0.02),chr);s.rotation.z=i*Math.PI/6;g.add(s);}
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,0.16,12),chr)).rotation.x=Math.PI/2;
+  return g;
+}
+
+// bike (faces +x), pivot sits on rear tyre contact point
+const pivot=new THREE.Group();scene.add(pivot);
+const bike=new THREE.Group();pivot.add(bike);
+const rear=wheel(),front=wheel();
+rear.position.set(0,R,0);front.position.set(1.5,R,0);
+bike.add(rear,front);
+// frame and body
+bike.add(limb([0,R,0.12],[0.6,0.62,0.12],0.04,blk),limb([0,R,-0.12],[0.6,0.62,-0.12],0.04,blk));
+const eng=new THREE.Mesh(new THREE.BoxGeometry(0.55,0.4,0.3),M(0x3b3f47,0.4,0.6));eng.position.set(0.7,0.62,0);bike.add(eng);
+const tank=new THREE.Mesh(new THREE.SphereGeometry(0.3,20,14),red);tank.scale.set(1.2,0.7,0.8);tank.position.set(0.8,1.08,0);bike.add(tank);
+const seat=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.12,0.28),blk);seat.position.set(0.2,1.0,0);bike.add(seat);
+const tail=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.1,0.22),red);tail.position.set(-0.2,1.06,0);tail.rotation.z=0.25;bike.add(tail);
+bike.add(limb([0.4,0.9,0],[0.85,0.85,0],0.05,blk));
+const pipe=limb([0.55,0.45,0.2],[-0.15,0.55,0.2],0.07,chr);bike.add(pipe);
+// fork + bars
+const head=[1.15,1.3];
+for(const z of[-0.12,0.12])bike.add(limb([head[0],head[1],z],[1.5,R,z],0.035,chr));
+bike.add(limb([head[0]-0.05,head[1]+0.05,-0.38],[head[0]-0.05,head[1]+0.05,0.38],0.03,blk));
+bike.add(limb([0.85,0.95,0],[head[0],head[1],0],0.05,blk));
+const lamp=new THREE.Mesh(new THREE.SphereGeometry(0.12,14,10),M(0xfff3b0,0.2,0.1));lamp.position.set(1.3,1.25,0);bike.add(lamp);
+// rider
+const hip=[0.1,1.15],sh=[-0.02,1.85],hand=[1.1,1.35],knee=[0.75,1.0],foot=[0.55,0.5];
+bike.add(limb([hip[0],hip[1]],[sh[0],sh[1]],0.17,jacket));
+const helmet=new THREE.Mesh(new THREE.SphereGeometry(0.2,18,14),red);helmet.position.set(0.05,2.12,0);bike.add(helmet);
+const visor=new THREE.Mesh(new THREE.SphereGeometry(0.15,14,10),blk);visor.position.set(0.17,2.1,0);visor.scale.set(0.8,0.6,1);bike.add(visor);
+for(const z of[-0.2,0.2]){
+  bike.add(limb([sh[0]+0.05,sh[1]-0.1,z],[hand[0],hand[1],z*1.4],0.06,jacket));
+  bike.add(limb([hip[0],hip[1],z*0.8],[knee[0],knee[1],z*1.1],0.09,pants));
+  bike.add(limb([knee[0],knee[1],z*1.1],[foot[0],foot[1],z*1.1],0.07,pants));
+}
+
+// orbit by drag
+let yaw=0.6,pitch=0.18,dist=7,drag=false,lx=0,ly=0;
+cv.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointerup',()=>drag=false);
+cv.addEventListener('pointermove',e=>{if(!drag)return;yaw-=(e.clientX-lx)*0.008;pitch=Math.max(0.02,Math.min(1.2,pitch+(e.clientY-ly)*0.006));lx=e.clientX;ly=e.clientY});
+cv.addEventListener('wheel',e=>{dist=Math.max(4,Math.min(12,dist+e.deltaY*0.005))},{passive:true});
+
+let t=0,ang=0,vel=0,over=false,overT=0,dist=0,best=0,spd=4,mode='local',roomObj=null,waiting=false,hostHere=true,roomCode='',simT=0;
+const inp={p1:false,p2:false};
+function bindPad(id,k,key){
+  const el=document.getElementById(id);
+  const set=v=>{if((mode==='host'&&k==='p2')||(mode==='guest'&&k==='p1'))return;inp[k]=v;el.classList.toggle('on',v);if(roomObj)roomObj.presence({held:!!(inp.p1||inp.p2)}).catch(()=>{})};
+  el.addEventListener('pointerdown',e=>{e.preventDefault();set(true)});
+  ['pointerup','pointerleave','pointercancel'].forEach(n=>el.addEventListener(n,()=>set(false)));
+  addEventListener('keydown',e=>{if(e.key.toLowerCase()===key)set(true)});
+  addEventListener('keyup',e=>{if(e.key.toLowerCase()===key)set(false)});
+}
+bindPad('p1','p1','a');bindPad('p2','p2','l');
+const elSc=document.getElementById('sc'),elBs=document.getElementById('bs'),elGm=document.getElementById('gm'),elMsg=document.getElementById('msg');
+const net={ang:0,vel:0,dist:0,best:0,over:false,brake:false,gas:false};
+const lob=document.getElementById('lobby'),lobMsg=document.getElementById('lobMsg');
+document.getElementById('goLocal').onclick=()=>{mode='local';lob.style.display='none'};
+function onPeersChange(){
+  const others=roomObj.peers().filter(p=>!p.isMe);
+  if(mode==='host'){
+    const b=others.filter(p=>p.presence&&p.presence.role==='brake');
+    waiting=b.length===0;net.brake=b.some(p=>p.presence.held);
+  }else{
+    const h=others.find(p=>p.presence&&p.presence.role==='gas');
+    hostHere=!!h;
+    if(h){net.gas=!!h.presence.held;const s=h.presence.sim;if(s){net.ang=s.a;net.vel=s.v;net.dist=s.d;net.best=s.b;net.over=!!s.o}}
+  }
+}
+async function startNet(host){
+  const ip=host?'127.0.0.1':document.getElementById('code').value.trim();
+  if(!ip){lobMsg.textContent='Type the host address first';return}
+  lobMsg.textContent=host?'Starting...':'Connecting...';
+  try{
+    let shown=ip;
+    if(host){if(!window.Android){lobMsg.textContent='Hosting works only in the Android app';return}shown=Android.startServer()}
+    const r=await window.NetShim.connect(ip);
+    mode=host?'host':'guest';roomCode=shown;roomObj=r;
+    await r.presence({role:host?'gas':'brake',held:false});
+    r.onPeers(onPeersChange);onPeersChange();
+    document.getElementById(host?'p2':'p1').style.display='none';
+    lob.style.display='none';
+  }catch(e){lobMsg.textContent='Could not connect. Check the address and the Wi-Fi.'}
+}
+document.getElementById('goHost').onclick=()=>startNet(true);
+document.getElementById('goJoin').onclick=()=>startNet(false);
+const ease=x=>x*x*(3-2*x);
+function size(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();}
+addEventListener('resize',size);size();
+const clock=new THREE.Clock();
+function tick(){
+  const dt=Math.min(clock.getDelta(),0.05);t+=dt;
+  if(mode==='guest'){
+    ang+=(net.ang-ang)*Math.min(1,dt*12);over=net.over;dist=net.dist;best=net.best;
+    if(over)elMsg.textContent='Flipped! Restarting...';
+  }else if(waiting){ang=0;vel=0;dist=0;over=false;
+  }else if(!over){
+    const acc=5*(inp.p1?1:0)-3.6*((inp.p2||net.brake)?1:0)+3*(ang-0.5)-1.3*vel;
+    vel+=acc*dt;ang+=vel*dt;
+    if(ang<0){ang=0;vel=Math.max(vel,0)}
+    if(ang>1.05){over=true;overT=0;elMsg.textContent='Flipped! Restarting...'}
+  }else{
+    ang=Math.min(1.6,ang+dt*1.4);overT+=dt;
+    if(overT>1.8){over=false;ang=0;vel=0;dist=0;elMsg.textContent='Player 1 holds gas, Player 2 holds brake'}
+  }
+  pivot.rotation.z=ang;
+  pivot.position.x=0;
+  spd+=(((inp.p1||net.gas)?10:4)-spd)*dt*2;const speed=spd;
+  simT+=dt;if(mode==='host'&&roomObj&&simT>0.1){simT=0;roomObj.presence({sim:{a:+ang.toFixed(3),v:+vel.toFixed(3),d:+dist.toFixed(1),b:+best.toFixed(1),o:over?1:0}}).catch(()=>{})}
+  if(!over&&ang>0.3){if(mode!=='guest'){dist+=speed*dt*0.5;if(dist>best)best=dist}elMsg.textContent=ang<0.85?'Nice balance, keep going':'Too high! Brake!'}
+  else if(!over)elMsg.textContent='Gas to lift the front wheel';
+  elSc.textContent=Math.floor(dist)+' m';elBs.textContent='Best '+Math.floor(best)+' m';
+  elGm.style.left=Math.min(100,ang/1.1*100)+'%';
+  if(waiting)elMsg.textContent='Waiting for Player 2. Their address to type: '+roomCode;
+  else if(mode==='guest'&&!hostHere)elMsg.textContent='Waiting for Player 1...';
+  rear.rotation.z-=dt*speed/R;front.rotation.z-=dt*speed/R;
+  const r=(a>0.05?1:0);
+  bike.rotation.z=0;
+  dashes.forEach(d=>{d.position.x-=dt*speed;if(d.position.x<-19)d.position.x+=38.4});
+  const wob=Math.sin(t*20)*0.004*(1-a);
+  pivot.position.y=wob;
+  const tx=0.75,ty=0.9;
+  cam.position.set(tx+Math.sin(yaw)*Math.cos(pitch)*dist,ty+Math.sin(pitch)*dist,Math.cos(yaw)*Math.cos(pitch)*dist);
+  cam.lookAt(tx,ty,0);
+  renderer.render(scene,cam);
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>

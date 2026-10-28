@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+android {
+    namespace 'com.example.motowheelie'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.example.motowheelie'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+    kotlinOptions { jvmTarget = '1.8' }
+}
+dependencies {
+    implementation 'org.nanohttpd:nanohttpd-websocket:2.3.1'
+}
+// Downloads three.js once (needs internet only at build time) so the game runs offline.
+tasks.register('fetchThree') {
+    def f = file('src/main/assets/three.min.js')
+    outputs.file(f)
+    doLast {
+        if (!f.exists() || f.length() < 100000) {
+            f.parentFile.mkdirs()
+            new URL('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js').withInputStream { i -> f.withOutputStream { it << i } }
+        }
+    }
+}
+tasks.matching { it.name == 'preBuild' }.configureEach { dependsOn 'fetchThree' }
